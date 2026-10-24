@@ -75,6 +75,20 @@ export function classifyStatement(sql: string): StatementKind {
         if (keyword === 'select' && /\binto\s+(?!@)[\w"`[#]/i.test(trimmed)) {
             return 'write';
         }
+        // `EXPLAIN (ANALYZE) <write>` on PostgreSQL actually executes the inner
+        // statement and commits its effects. Strip the EXPLAIN prefix and options,
+        // then classify the inner statement whenever ANALYZE is present.
+        if (keyword === 'explain' || keyword === 'describe' || keyword === 'desc') {
+            if (/\banaly[sz]e\b/i.test(trimmed)) {
+                const inner = trimmed.replace(/^\s*(?:explain|describe|desc)\s+(?:\([^)]*\)\s*)?(?:(?:analyze|analyse|verbose|format\s*=\s*\w+)\s+)*/i, '');
+                if (inner && inner !== trimmed) {
+                    const innerKind = classifyStatement(inner);
+                    if (innerKind !== 'read') {
+                        return innerKind === 'ddl' ? 'ddl' : 'write';
+                    }
+                }
+            }
+        }
         return 'read';
     }
     if (DDL_KEYWORDS.indexOf(keyword) !== -1) {

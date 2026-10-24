@@ -10,8 +10,20 @@ describe('statementClassifier', () => {
     it('classifies SHOW/EXPLAIN/DESCRIBE/PRAGMA as read', () => {
         expect(classifyStatement('SHOW TABLES')).toEqual('read');
         expect(classifyStatement('EXPLAIN SELECT 1')).toEqual('read');
+        expect(classifyStatement('EXPLAIN (FORMAT JSON) SELECT 1')).toEqual('read');
         expect(classifyStatement('DESCRIBE table1')).toEqual('read');
         expect(classifyStatement('PRAGMA table_info(table1)')).toEqual('read');
+    });
+
+    it('classifies EXPLAIN ANALYZE over a write as a write (PG executes the inner statement)', () => {
+        expect(classifyStatement('EXPLAIN ANALYZE DELETE FROM t')).toEqual('write');
+        expect(classifyStatement('EXPLAIN ANALYZE UPDATE t SET a = 1')).toEqual('write');
+        expect(classifyStatement('EXPLAIN (ANALYZE) INSERT INTO t VALUES (1)')).toEqual('write');
+        expect(classifyStatement('EXPLAIN ANALYSE DELETE FROM t')).toEqual('write');
+        // EXPLAIN ANALYZE SELECT is still read-only
+        expect(classifyStatement('EXPLAIN ANALYZE SELECT * FROM t')).toEqual('read');
+        // EXPLAIN without ANALYZE is always read-only
+        expect(classifyStatement('EXPLAIN DELETE FROM t')).toEqual('read');
     });
 
     it('classifies INSERT/UPDATE/DELETE as write', () => {

@@ -262,7 +262,11 @@
             input.focus();
             input.select();
 
+            let finished = false;
+            const finish = () => { finished = true; input.removeEventListener('blur', onBlur); };
             const commit = () => {
+                if (finished) return;
+                finish();
                 const newValue = input.value;
                 if (newValue === String(row[col])) {
                     td.textContent = originalText;
@@ -278,13 +282,14 @@
                     payload: { tabId: tab.id, tableName: tab.tableName, rowIndex: rowIndex, row: row, column: col, newValue: newValue }
                 });
             };
-            const cancel = () => { td.textContent = originalText; };
+            const cancel = () => { if (finished) return; finish(); td.textContent = originalText; };
+            const onBlur = () => commit();
 
             input.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') { commit(); }
                 if (e.key === 'Escape') { cancel(); }
             });
-            input.addEventListener('blur', commit);
+            input.addEventListener('blur', onBlur);
         }
 
         function toCsv(columns, rows) {
