@@ -8,10 +8,21 @@ import { factoryServer, ServerTypeName } from './factoryServer';
 
 import structureProvider from './StructureProvider';
 import connectionsProvider from './ConnectionsProvider';
+import { isWriteStatement, classifyStatement } from './sql/statementClassifier';
+import { extractTableName } from './sql/extractTableName';
+import { buildCellUpdate, getAffectedRows } from './sql/buildCellUpdate';
+import { queryHistoryStore } from './history/QueryHistoryStore';
+import { resultsPanel, BatchStatementResult } from './results/ResultsPanel';
 
 import * as csv from 'fast-csv';
 import { AnyObject } from '../typeing/common';
 
+export interface BatchOptions {
+    /** Stop running further statements in the batch after the first error. Default true. */
+    stopOnError?: boolean;
+    /** Record each statement in the query history. Default true. */
+    recordHistory?: boolean;
+}
 
 export class Manager {
     server: AbstractServer[];
@@ -19,6 +30,11 @@ export class Manager {
     statusBar: StatusBar;
     OutputChannel: vscode.OutputChannel | null;
     currentStructure: AnyObject | null;
+    /** Table name of the last single-table `SELECT * FROM x [LIMIT n]` style query, used for inline editing. */
+    private lastQueriedTable: string | null;
+    /** Set to true by "SQL: Stop Running Queries" to stop a batch before its next statement starts. */
+    private stopRequested: boolean;
+    private runningBatch: boolean;
 
     constructor() {
         this.server = [];
@@ -26,6 +42,9 @@ export class Manager {
         this.statusBar = new StatusBar();
         this.OutputChannel = null;
         this.currentStructure = null;
+        this.lastQueriedTable = null;
+        this.stopRequested = false;
+        this.runningBatch = false;
         this.outputMsg = this.outputMsg.bind(this);
     }
 
@@ -33,7 +52,7 @@ export class Manager {
         const databaseName = this.getCurrentDatabase();
 
         if (this.currentServer) {
-            this.statusBar.setServer(this.currentServer.getName());
+            this.statusBar.setServer(this.currentServer.getName(), this.currentServer.readOnly);
         } else {
             this.statusBar.setServer(null);
         }
@@ -63,6 +82,7 @@ export class Manager {
         newServer.setOutput(this.OutputChannel);
         return new Promise((resolve, reject) => {
             newServer.connectPromise(fields).then(() => {
+                newServer.readOnly = Boolean(fields.readOnly);
                 _this.registerNewServer(newServer);
                 _this.showStatus();
                 resolve(newServer);
@@ -77,6 +97,7 @@ export class Manager {
             newServer.setOutput(this.OutputChannel);
             newServer.restoreConnection(fields).then(() => {
                 newServer.name = fields.name;
+                newServer.readOnly = Boolean(fields.readOnly);
                 this.registerNewServer(newServer);
                 this.showStatus();
             }).catch((err) => {
@@ -85,24 +106,129 @@ export class Manager {
         });
     }
 
-    runAsQuery(sqlMulti: string){
-        if(this.currentServer === null){
+    /**
+     * Run one or many `;`-separated statements against the current server,
+     * strictly in order (never concurrently): each statement only starts
+     * once the previous one has resolved or rejected. This matters for
+     * scripts where a later statement depends on an earlier one (e.g.
+     * `CREATE TABLE` then `INSERT INTO` it), which a `Promise.all` based
+     * runner cannot guarantee.
+     *
+     * Read-only connections are enforced up-front: if any statement in the
+     * batch would write, the whole batch is rejected before anything runs.
+     *
+     * @param {string} sqlMulti - one or more `;`-separated statements
+     * @param {BatchOptions} [options]
+     * @return {Promise<BatchStatementResult[]>}
+     */
+    async runBatch(sqlMulti: string, options: BatchOptions = {}): Promise<BatchStatementResult[]> {
+        const stopOnError = options.stopOnError !== false;
+        const recordHistory = options.recordHistory !== false;
+
+        if (this.currentServer === null) {
             vscode.window.showErrorMessage('Server not selected');
-            return;
+            return [];
         }
         const currentServer = this.currentServer;
-        sqlMulti=currentServer.removeComments(sqlMulti);
-        const queries = currentServer.splitQueries(sqlMulti)
-            .map((sql) => currentServer.queryPromise(sql).then((data) => Promise.resolve({data, sql})));
+        const cleanedSql = currentServer.removeComments(sqlMulti);
+        const statements = currentServer.splitQueries(cleanedSql);
 
-        Promise.all(queries).then(allResult => {
-            allResult.forEach(result => {
-                this.outputMsg(result.sql);
-                this.queryOutput(result.data, result.sql);
-            });
-        }).catch((errMsg: string) => {
-            vscode.window.showErrorMessage(errMsg);
-            this.outputMsg(errMsg);
+        if (currentServer.readOnly) {
+            const offending = statements.filter(isWriteStatement);
+            if (offending.length > 0) {
+                const msg = `Blocked ${offending.length} write statement(s) on read-only connection "${currentServer.getName()}". ` +
+                    'Toggle off read-only mode (SQL: Toggle Read-Only Mode) to run them.';
+                vscode.window.showErrorMessage(msg);
+                this.outputMsg(msg);
+                return [];
+            }
+        }
+
+        this.stopRequested = false;
+        this.runningBatch = true;
+        const results: BatchStatementResult[] = [];
+        let schemaMayHaveChanged = false;
+
+        try {
+            for (const sql of statements) {
+                if (this.stopRequested) {
+                    results.push({ sql, success: false, error: 'Stopped before running (SQL: Stop Running Queries).' });
+                    continue;
+                }
+                try {
+                    const data = await currentServer.queryPromise(sql);
+                    const tableName = extractTableName(sql);
+                    results.push({ sql, success: true, data, tableName });
+                    this.outputMsg(sql);
+                    this.queryOutputAscii(data as AnyObject);
+                    if (recordHistory) {
+                        queryHistoryStore.add(sql, currentServer.getName(), currentServer.currentDatabase);
+                    }
+                    if (tableName) {
+                        this.lastQueriedTable = tableName;
+                    }
+                    this.syncDatabaseAfterUse(sql, currentServer);
+                    if (classifyStatement(sql) === 'ddl') {
+                        schemaMayHaveChanged = true;
+                    }
+                } catch (errMsg) {
+                    const message = errMsg instanceof Error ? errMsg.message : String(errMsg);
+                    results.push({ sql, success: false, error: message });
+                    this.outputMsg(`${sql}\n-- ERROR: ${message}`);
+                    if (recordHistory) {
+                        queryHistoryStore.add(sql, currentServer.getName(), currentServer.currentDatabase);
+                    }
+                    if (stopOnError) {
+                        vscode.window.showErrorMessage(message);
+                        break;
+                    }
+                }
+            }
+        } finally {
+            this.runningBatch = false;
+        }
+
+        if (schemaMayHaveChanged && currentServer.currentDatabase !== null && currentServer === this.currentServer) {
+            // Tables/columns were created, dropped or altered: reload the structure
+            // tree and autocompletion data once the whole batch has settled.
+            this.refreshStructureDataBase();
+        }
+
+        return results;
+    }
+
+    /**
+     * A `USE name` statement run from a script switches the session's database
+     * on the server; mirror that here so the status bar, the structure tree and
+     * autocompletion follow along instead of staying on "Database not selected".
+     */
+    private syncDatabaseAfterUse(sql: string, server: AbstractServer) {
+        const match = sql.trim().match(/^use\s+[`"[]?([^`"\]\s;]+)[`"\]]?\s*;?$/i);
+        if (match && server.type !== 'postgres' && server.type !== 'postgresSSL') {
+            server.currentDatabase = match[1];
+            this.showStatus();
+        }
+    }
+
+    /** Request that the currently running batch stop before its next statement. */
+    stopRunningQueries() {
+        if (this.runningBatch) {
+            this.stopRequested = true;
+            this.outputMsg('-- Stop requested: will not start further statements in this batch --');
+        }
+    }
+
+    isRunningBatch() {
+        return this.runningBatch;
+    }
+
+    getLastQueriedTable(): string | null {
+        return this.lastQueriedTable;
+    }
+
+    runAsQuery(sqlMulti: string){
+        this.runBatch(sqlMulti).then((results) => {
+            resultsPanel.showBatch(results, this.currentServer);
         });
     }
 
@@ -111,22 +237,78 @@ export class Manager {
             vscode.window.showErrorMessage('Server not selected');
             return;
         }
-        const currentServer = this.currentServer;
-        sqlMulti=currentServer.removeComments(sqlMulti);
-        const queries = currentServer.splitQueries(sqlMulti)
-            .map((sql) => currentServer.queryPromise(sql).then((data) => Promise.resolve({data, sql})));
-
-        Promise.all(queries).then(allResult => {
-            allResult.forEach(result => {
-                this.outputMsg(result.sql);
-                this.queryToCSV(result.data);
+        this.runBatch(sqlMulti).then((results) => {
+            results.forEach(result => {
+                if (result.success) {
+                    this.queryToCSV(result.data);
+                }
             });
-        }).catch((errMsg: string) => {
-            vscode.window.showErrorMessage(errMsg);
-            this.outputMsg(errMsg);
         });
     }
-    
+
+    /**
+     * Build and run an `UPDATE` for a single cell edited in the results grid.
+     * Uses the primary key column(s) from the current table structure when
+     * known, otherwise falls back to matching every original column value
+     * (safer, but only works when the row's full original values were sent
+     * back from the grid).
+     *
+     * @param {string} tableName
+     * @param {AnyObject} originalRow - the full row as it was rendered
+     * @param {string} column - column being changed
+     * @param {any} newValue
+     * @return {Promise<{}>}
+     */
+    applyCellEdit(tableName: string, originalRow: AnyObject, column: string, newValue: any): Promise<{}> {
+        if (this.currentServer === null) {
+            return Promise.reject(new Error('Server not selected'));
+        }
+        const currentServer = this.currentServer;
+        if (currentServer.readOnly) {
+            return Promise.reject(new Error('Connection is read-only. Toggle off read-only mode to edit data.'));
+        }
+        const structure = this.currentStructure && this.currentStructure[tableName];
+        const { sql, params } = buildCellUpdate({
+            tableName,
+            column,
+            newValue,
+            originalRow,
+            keyColumns: this.findPrimaryKeyColumns(structure, originalRow),
+            quoteIdentifier: (name) => currentServer.getIdentifiedTableName(name),
+            placeholder: (index) => currentServer.getParamPlaceholder(index)
+        });
+
+        return currentServer.queryPromise(sql, params).then((data) => {
+            this.outputMsg(`${sql}  -- params: ${JSON.stringify(params)}`);
+            queryHistoryStore.add(sql, currentServer.getName(), currentServer.currentDatabase);
+            if (getAffectedRows(data) === 0) {
+                throw new Error('No row was updated: it may have changed since this result was loaded, or the table has no primary key to identify it.');
+            }
+            return data;
+        });
+    }
+
+    private findPrimaryKeyColumns(structure: AnyObject[] | undefined, row: AnyObject): string[] {
+        if (!Array.isArray(structure)) {
+            return [];
+        }
+        return structure
+            .filter((col) => typeof col.Key === 'string' && /PRI/i.test(col.Key))
+            .map((col) => col.Field)
+            .filter((field) => typeof field === 'string' && Object.prototype.hasOwnProperty.call(row, field));
+    }
+
+    toggleReadOnly() {
+        if (this.currentServer === null) {
+            vscode.window.showErrorMessage('Server not selected');
+            return;
+        }
+        this.currentServer.readOnly = !this.currentServer.readOnly;
+        const state = this.currentServer.readOnly ? 'ON' : 'OFF';
+        vscode.window.showInformationMessage(`Read-only mode is now ${state} for "${this.currentServer.getName()}".`);
+        this.showStatus();
+    }
+
     getDatabase (){
         if(!this.currentServer){
             return Promise.resolve([]);

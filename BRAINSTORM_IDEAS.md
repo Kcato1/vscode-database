@@ -385,3 +385,11 @@ This document contains **50 ideas** organized into **11 categories** for enhanci
 Generated on: 2025-12-16
 For: vscode-database extension
 Branch: claude/brainstorm-ideas-E4QHH
+
+## Implementation status
+
+Delivered in 2.3.0 (see `doc/new-features.md`): #1 Query History, #2 Query Formatting, #5 Copy Cell/Row/Column,
+#6 Multiple Database Support (MariaDB, SQL Server, SQLite), #7 Query Autocomplete Improvements, #11 Multi-Query Execution
+(ordered, per-statement tabs, stop on error, stop command; transaction wrapping is not included),
+#16 Inline Data Editing, #17 Advanced Filtering (global filter and column sort; per-column and saved filters are not included),
+#21 Read-Only Connections, #43 Connection Testing.

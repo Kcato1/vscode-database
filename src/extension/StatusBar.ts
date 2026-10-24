@@ -16,8 +16,10 @@ export class StatusBar {
         this.setServer(null);
     }
 
-    setServer(name: string|null){
-        this.serverStatus.text = '$(server) ' + (name || 'Server not selected');
+    setServer(name: string|null, readOnly = false){
+        const lock = readOnly ? '$(lock) ' : '';
+        this.serverStatus.text = '$(server) ' + lock + (name || 'Server not selected');
+        this.serverStatus.tooltip = readOnly ? 'Read-only connection (SQL: Toggle Read-Only Mode)' : undefined;
         if (name) {
             this.databaseStatus.show();
         } else {

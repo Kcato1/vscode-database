@@ -5,8 +5,11 @@ export const allServerType: {
 } = {
     mysql: () => import('./engine/mysql-pass'),
     mysqlssl: () => import('./engine/mysql-ssl'),
+    mariadb: () => import('./engine/mariadb'),
     postgres: () => import('./engine/postgresql'),
     postgresSSL: () => import('./engine/postgresslsql'),
+    mssql: () => import('./engine/mssql'),
+    sqlite: () => import('./engine/sqlite'),
 };
 
 export type ServerTypeName = keyof typeof allServerType;

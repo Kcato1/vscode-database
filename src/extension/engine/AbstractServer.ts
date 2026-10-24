@@ -17,11 +17,19 @@ export class AbstractServer
     typeName?: string;
     fieldsToConnect: AnyObject[];
 
+    /**
+     * When true, Manager refuses to run write/DDL statements against this
+     * connection. Set from the "Open as read-only" checkbox on connect, or
+     * toggled later with the "SQL: Toggle Read-Only Mode" command.
+     */
+    readOnly: boolean;
+
     constructor() {
         this.type = this.typeName;
         this.fieldsToConnect = [];
         this.currentDatabase = null;
         this.OutputChannel = null;
+        this.readOnly = false;
     }
 
     /**
@@ -118,6 +126,24 @@ export class AbstractServer
     // eslint-disable-next-line no-unused-vars
     queryPromise(sql: string, params?: any): Promise<{}>{
         return Promise.reject('No implement queryPromise');
+    }
+
+    /**
+     * @param {number} index - zero based position of a bound parameter
+     * @return {string} the engine's placeholder syntax for that parameter
+     */
+    getParamPlaceholder(index: number): string {
+        return '?';
+    }
+
+    /**
+     * Release any underlying connection/pool/handle held by this server.
+     * Safe to call multiple times. The default implementation is a no-op
+     * for engines that hold no persistent resource worth closing early.
+     * @return {Promise<void>}
+     */
+    closeConnect(): Promise<void> {
+        return Promise.resolve();
     }
 
     // eslint-disable-next-line no-unused-vars

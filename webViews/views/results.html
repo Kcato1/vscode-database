@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" type="text/css" href="{{mainCssPath}}">
+    <title>Query Results</title>
+    <style>
+        body { padding: 0; margin: 0; }
+        .results-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--vscode-panel-border, #454545);
+            flex-wrap: wrap;
+        }
+        .results-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 12px 0 12px; }
+        .results-tab {
+            padding: 4px 10px;
+            cursor: pointer;
+            border: 1px solid var(--vscode-panel-border, #454545);
+            border-bottom: none;
+            border-radius: 3px 3px 0 0;
+            font-size: 12px;
+            opacity: 0.75;
+        }
+        .results-tab--active { opacity: 1; font-weight: bold; }
+        .results-tab--error { color: var(--vscode-errorForeground, #f14c4c); }
+        .results-message { padding: 6px 12px; font-size: 12px; opacity: 0.85; }
+        .results-error { padding: 6px 12px; color: var(--vscode-errorForeground, #f14c4c); white-space: pre-wrap; }
+        .results-search {
+            flex: 1;
+            min-width: 160px;
+            padding: 4px 8px;
+            background: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            border: 1px solid var(--vscode-input-border, transparent);
+        }
+        .results-table-wrap { overflow: auto; max-height: calc(100vh - 92px); }
+        table.results-grid { border-collapse: collapse; width: 100%; font-size: 12px; font-family: var(--vscode-editor-font-family, monospace); }
+        table.results-grid th, table.results-grid td {
+            border: 1px solid var(--vscode-panel-border, #454545);
+            padding: 3px 8px;
+            text-align: left;
+            white-space: nowrap;
+        }
+        table.results-grid th { position: sticky; top: 0; background: var(--vscode-editor-background); cursor: pointer; user-select: none; }
+        table.results-grid th .sort-indicator { opacity: 0.6; font-size: 10px; margin-left: 4px; }
+        table.results-grid td.editable { cursor: text; }
+        table.results-grid td.editable:hover { outline: 1px dashed var(--vscode-focusBorder, #007fd4); outline-offset: -1px; }
+        table.results-grid td.cell-dirty { background: rgba(255, 196, 0, 0.15); }
+        table.results-grid td.cell-success { background: rgba(80, 200, 120, 0.25); }
+        table.results-grid td.cell-fail { background: rgba(241, 76, 76, 0.25); }
+        table.results-grid tr.row-selected td { background: var(--vscode-list-activeSelectionBackground, rgba(0,122,204,0.2)); }
+        table.results-grid input.cell-editor {
+            width: 100%;
+            box-sizing: border-box;
+            background: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            border: 1px solid var(--vscode-focusBorder, #007fd4);
+        }
+        .results-footer { padding: 4px 12px; font-size: 11px; opacity: 0.7; }
+        button.small { font-size: 11px; padding: 2px 8px; }
+        .readonly-badge { font-size: 11px; opacity: 0.8; padding: 2px 6px; border: 1px solid var(--vscode-panel-border); border-radius: 3px; }
+    </style>
+</head>
+
+<body>
+    <div class="results-tabs" id="tabs"></div>
+    <div class="results-toolbar">
+        <input class="results-search" id="search" type="text" placeholder="Filter rows (searches all columns)…" />
+        <button class="small" id="copyCsv">Copy visible as CSV</button>
+        <button class="small" id="copyJson">Copy visible as JSON</button>
+        <button class="small" id="copyMarkdown">Copy visible as Markdown</button>
+        <span class="readonly-badge" id="readOnlyBadge" hidden>🔒 read-only</span>
+    </div>
+    <div id="messageArea"></div>
+    <div class="results-table-wrap">
+        <table class="results-grid" id="grid" hidden>
+            <thead><tr id="headRow"></tr></thead>
+            <tbody id="bodyRow"></tbody>
+        </table>
+    </div>
+    <div class="results-footer" id="footer"></div>
+
+    <script>
+        const vscode = acquireVsCodeApi();
+
+        let tabs = [];
+        let activeTabId = null;
+        let readOnly = false;
+        let sortColumn = null;
+        let sortDirection = 1;
+        let filterText = '';
+        let selectedRowIndex = -1;
+        const dirtyCells = new Set();
+
+        const escapeHtml = (value) => String(value === null || typeof value === 'undefined' ? 'NULL' : value)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+        function getActiveTab() {
+            return tabs.find((t) => t.id === activeTabId) || null;
+        }
+
+        function getFilteredSortedRows(tab) {
+            let rows = tab.rows;
+            if (filterText) {
+                const needle = filterText.toLowerCase();
+                rows = rows.filter((row) => tab.columns.some((col) =>
+                    String(row[col] === null || typeof row[col] === 'undefined' ? 'NULL' : row[col]).toLowerCase().includes(needle)
+                ));
+            }
+            if (sortColumn) {
+                rows = rows.slice().sort((a, b) => {
+                    const av = a[sortColumn];
+                    const bv = b[sortColumn];
+                    if (av === bv) return 0;
+                    if (av === null || typeof av === 'undefined') return 1;
+                    if (bv === null || typeof bv === 'undefined') return -1;
+                    return (av > bv ? 1 : -1) * sortDirection;
+                });
+            }
+            return rows;
+        }
+
+        function renderTabs() {
+            const el = document.getElementById('tabs');
+            el.innerHTML = '';
+            tabs.forEach((tab) => {
+                const div = document.createElement('div');
+                div.className = 'results-tab' + (tab.id === activeTabId ? ' results-tab--active' : '') + (!tab.success ? ' results-tab--error' : '');
+                const shortSql = tab.sql.trim().replace(/\s+/g, ' ').slice(0, 40);
+                div.textContent = (tabs.indexOf(tab) + 1) + '. ' + (shortSql || '(empty)') + (tab.sql.length > 40 ? '…' : '');
+                div.title = tab.sql;
+                div.addEventListener('click', () => {
+                    activeTabId = tab.id;
+                    sortColumn = null;
+                    filterText = '';
+                    document.getElementById('search').value = '';
+                    selectedRowIndex = -1;
+                    renderAll();
+                });
+                el.appendChild(div);
+            });
+        }
+
+        function renderMessage(tab) {
+            const area = document.getElementById('messageArea');
+            area.innerHTML = '';
+            if (!tab) return;
+            if (!tab.success) {
+                const div = document.createElement('div');
+                div.className = 'results-error';
+                div.textContent = tab.error || 'Query failed.';
+                area.appendChild(div);
+            } else if (tab.message) {
+                const div = document.createElement('div');
+                div.className = 'results-message';
+                div.textContent = tab.message + (tab.editable ? '  (double-click a cell to edit)' : '');
+                area.appendChild(div);
+            }
+        }
+
+        function renderGrid(tab) {
+            const grid = document.getElementById('grid');
+            const head = document.getElementById('headRow');
+            const body = document.getElementById('bodyRow');
+            head.innerHTML = '';
+            body.innerHTML = '';
+
+            if (!tab || tab.columns.length === 0) {
+                grid.hidden = true;
+                document.getElementById('footer').textContent = '';
+                return;
+            }
+            grid.hidden = false;
+
+            tab.columns.forEach((col) => {
+                const th = document.createElement('th');
+                th.textContent = col;
+                if (sortColumn === col) {
+                    const indicator = document.createElement('span');
+                    indicator.className = 'sort-indicator';
+                    indicator.textContent = sortDirection === 1 ? '▲' : '▼';
+                    th.appendChild(indicator);
+                }
+                th.addEventListener('click', () => {
+                    if (sortColumn === col) {
+                        sortDirection = sortDirection === 1 ? -1 : 1;
+                    } else {
+                        sortColumn = col;
+                        sortDirection = 1;
+                    }
+                    renderAll();
+                });
+                head.appendChild(th);
+            });
+
+            const rows = getFilteredSortedRows(tab);
+            rows.forEach((row, rowIndex) => {
+                const tr = document.createElement('tr');
+                if (rowIndex === selectedRowIndex) {
+                    tr.classList.add('row-selected');
+                }
+                tr.addEventListener('click', (e) => {
+                    if (e.target.tagName === 'INPUT') {
+                        return;
+                    }
+                    // Toggle the class in place: re-rendering here would destroy the
+                    // clicked cell between the two clicks of a double-click.
+                    selectedRowIndex = rowIndex;
+                    document.querySelectorAll('#bodyRow tr.row-selected').forEach((el) => el.classList.remove('row-selected'));
+                    tr.classList.add('row-selected');
+                });
+
+                tab.columns.forEach((col) => {
+                    const td = document.createElement('td');
+                    // Key by the row's index in the full result set (not its position
+                    // in the filtered/sorted view) so edits can find their cell again.
+                    const cellKey = tab.id + ':' + tab.rows.indexOf(row) + ':' + col;
+                    td.textContent = row[col] === null || typeof row[col] === 'undefined' ? 'NULL' : row[col];
+                    td.dataset.cellKey = cellKey;
+
+                    if (tab.editable) {
+                        td.classList.add('editable');
+                        if (dirtyCells.has(cellKey)) td.classList.add('cell-dirty');
+                        td.addEventListener('dblclick', () => startEdit(tab, row, col, td));
+                    }
+
+                    td.addEventListener('contextmenu', (e) => {
+                        e.preventDefault();
+                        sendContextMenu(tab, rows, rowIndex, col, row);
+                    });
+
+                    tr.appendChild(td);
+                });
+                body.appendChild(tr);
+            });
+
+            document.getElementById('footer').textContent =
+                rows.length + ' of ' + tab.rows.length + ' row' + (tab.rows.length === 1 ? '' : 's') +
+                (filterText ? ' (filtered)' : '');
+        }
+
+        function startEdit(tab, row, col, td) {
+            const originalText = td.textContent;
+            const input = document.createElement('input');
+            input.className = 'cell-editor';
+            input.value = row[col] === null || typeof row[col] === 'undefined' ? '' : row[col];
+            td.textContent = '';
+            td.appendChild(input);
+            input.focus();
+            input.select();
+
+            const commit = () => {
+                const newValue = input.value;
+                if (newValue === String(row[col])) {
+                    td.textContent = originalText;
+                    return;
+                }
+                const rowIndex = tab.rows.indexOf(row);
+                const cellKey = tab.id + ':' + rowIndex + ':' + col;
+                dirtyCells.add(cellKey);
+                td.textContent = newValue;
+                td.classList.add('cell-dirty');
+                vscode.postMessage({
+                    type: 'CELL_EDIT',
+                    payload: { tabId: tab.id, tableName: tab.tableName, rowIndex: rowIndex, row: row, column: col, newValue: newValue }
+                });
+            };
+            const cancel = () => { td.textContent = originalText; };
+
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') { commit(); }
+                if (e.key === 'Escape') { cancel(); }
+            });
+            input.addEventListener('blur', commit);
+        }
+
+        function toCsv(columns, rows) {
+            const esc = (v) => {
+                const s = v === null || typeof v === 'undefined' ? '' : String(v);
+                return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+            };
+            const lines = [columns.join(',')];
+            rows.forEach((row) => lines.push(columns.map((c) => esc(row[c])).join(',')));
+            return lines.join('\n');
+        }
+
+        function toMarkdown(columns, rows) {
+            const lines = ['| ' + columns.join(' | ') + ' |', '| ' + columns.map(() => '---').join(' | ') + ' |'];
+            rows.forEach((row) => lines.push('| ' + columns.map((c) => String(row[c] === null || typeof row[c] === 'undefined' ? 'NULL' : row[c])).join(' | ') + ' |'));
+            return lines.join('\n');
+        }
+
+        function sendContextMenu(tab, visibleRows, rowIndex, col, row) {
+            const cellText = String(row[col] === null || typeof row[col] === 'undefined' ? 'NULL' : row[col]);
+            const rowText = tab.columns.map((c) => String(row[c] === null || typeof row[c] === 'undefined' ? 'NULL' : row[c])).join('\t');
+            const columnText = visibleRows.map((r) => String(r[col] === null || typeof r[col] === 'undefined' ? 'NULL' : r[col])).join('\n');
+            vscode.postMessage({
+                type: 'CONTEXT_MENU',
+                payload: {
+                    cellText,
+                    rowText,
+                    columnText,
+                    csvText: toCsv(tab.columns, visibleRows),
+                    jsonText: JSON.stringify(visibleRows, null, 2),
+                    markdownText: toMarkdown(tab.columns, visibleRows)
+                }
+            });
+        }
+
+        function renderAll() {
+            renderTabs();
+            const tab = getActiveTab();
+            renderMessage(tab);
+            renderGrid(tab);
+            document.getElementById('readOnlyBadge').hidden = !readOnly;
+        }
+
+        document.getElementById('search').addEventListener('input', (e) => {
+            filterText = e.target.value;
+            renderGrid(getActiveTab());
+        });
+
+        function copyVisible(formatter) {
+            const tab = getActiveTab();
+            if (!tab) return;
+            const rows = getFilteredSortedRows(tab);
+            vscode.postMessage({ type: 'COPY', payload: { text: formatter(tab.columns, rows) } });
+        }
+        document.getElementById('copyCsv').addEventListener('click', () => copyVisible(toCsv));
+        document.getElementById('copyJson').addEventListener('click', () => copyVisible((cols, rows) => JSON.stringify(rows, null, 2)));
+        document.getElementById('copyMarkdown').addEventListener('click', () => copyVisible(toMarkdown));
+
+        window.addEventListener('message', ({ data }) => {
+            if (data.type === 'SHOW_BATCH') {
+                tabs = data.payload.tabs;
+                readOnly = data.payload.readOnly;
+                dirtyCells.clear();
+                activeTabId = tabs.length > 0 ? tabs[0].id : null;
+                sortColumn = null;
+                filterText = '';
+                selectedRowIndex = -1;
+                document.getElementById('search').value = '';
+                renderAll();
+            }
+            if (data.type === 'CELL_EDIT_RESULT') {
+                const { tabId, rowIndex, column, success, error, newValue } = data.payload;
+                const tab = tabs.find((t) => t.id === tabId);
+                if (!tab || !tab.rows[rowIndex]) return;
+                const cellKey = tabId + ':' + rowIndex + ':' + column;
+                dirtyCells.delete(cellKey);
+                if (success) {
+                    tab.rows[rowIndex][column] = newValue;
+                }
+                const td = document.querySelector('[data-cell-key="' + cellKey + '"]');
+                if (td) {
+                    const shown = tab.rows[rowIndex][column];
+                    td.textContent = shown === null || typeof shown === 'undefined' ? 'NULL' : shown;
+                    td.classList.remove('cell-dirty');
+                    td.classList.add(success ? 'cell-success' : 'cell-fail');
+                    if (!success) {
+                        td.title = error || 'Edit failed';
+                    }
+                    setTimeout(() => td.classList.remove('cell-success', 'cell-fail'), 2500);
+                }
+            }
+        });
+    </script>
+</body>
+
+</html>

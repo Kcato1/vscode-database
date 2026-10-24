@@ -125,12 +125,14 @@ export class PostgreSQLType extends AbstractServer{
             connection.connect((err, client, release) => {
                 this.connection = connection;
                 this.release = release;
-                this.release();
+                if (release) {
+                    release();
+                }
                 if (err) {
                     reject('PostgreSQL Error: ' + err.stack);
                     return;
                 }
-                resolve();
+                resolve(undefined);
             });
             connection.on('error', (err) => {
                 reject('PostgreSQL Error: ' + err.stack);
@@ -139,17 +141,17 @@ export class PostgreSQLType extends AbstractServer{
     }
 
     /**
-     * @return {Promise}
+     * @return {Promise<void>}
      */
-    closeConnect(){
+    closeConnect(): Promise<void> {
         return new Promise((resolve, reject) => {
             if(!this.connection){
-                resolve();
+                resolve(undefined);
                 return;
             }
             this.connection.end().then(() => {
                 this.connection = undefined;
-                resolve();
+                resolve(undefined);
             }).catch(reject);
         });
     }
@@ -164,12 +166,16 @@ export class PostgreSQLType extends AbstractServer{
                 reject(new Error('PostgreSQL: No have correct connection.'));
                 return;
             }
+            // Pool#query acquires and releases its own client; calling the
+            // connect-time release() here would double-release (pg >= 8 throws).
             this.connection.query(sql, params, (err: Error, rows: QueryResult) => {
-                this.release();
                 if (err) {
                     reject(new Error('PostgreSQL Error: ' + err.message));
                     return;
                 }
+                // Keep the affected row count (UPDATE/DELETE return no rows) without
+                // changing the array-of-rows contract callers rely on.
+                Object.defineProperty(rows.rows, 'rowCount', { value: rows.rowCount, enumerable: false });
                 resolve(rows.rows);
             });
         });
@@ -240,7 +246,7 @@ export class PostgreSQLType extends AbstractServer{
                     }).then(() =>{
                         this.schema = schema;
                         this.currentDatabase = database;
-                        resolve();
+                        resolve({});
                     }).catch(reject);
                 });
             }
@@ -251,7 +257,7 @@ export class PostgreSQLType extends AbstractServer{
         return new Promise((resolve, reject) => {
             this.queryPromise('SET search_path to ' + schema).then(() => {
                 this.schema = schema;
-                resolve();
+                resolve(undefined);
             }).catch(() => {
                 this.schema = 'public';
                 reject();
@@ -303,8 +309,12 @@ export class PostgreSQLType extends AbstractServer{
      * @param {string} tableName
      * @return {string} a quoted identifier table name
      */
+    getParamPlaceholder(index: number): string {
+        return `$${index + 1}`;
+    }
+
     getIdentifiedTableName(tableName: string): string {
-        return `"${tableName}"`;
+        return `"${tableName.replace(/"/g, '""')}"`;
     }
 
     /**

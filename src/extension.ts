@@ -8,16 +8,29 @@ import connectionsProvider from './extension/ConnectionsProvider';
 import completionItemsProvider from './extension/CompletionItemsProvider';
 import { setExtensionPath } from './extension/webViews/webViewsRunner';
 import { markdownProvider } from './extension/providers/markdownProvider';
+import { queryHistoryStore } from './extension/history/QueryHistoryStore';
+import { resultsPanel } from './extension/results/ResultsPanel';
+import { sqlFormattingProvider } from './extension/formatting/sqlFormattingProvider';
 
 export function activate(context: vscode.ExtensionContext) {
-    
+
     config.getDatabases().then((databases) => {
         manager.restoreConnections(databases);
     });
 
     setExtensionPath(context.extensionPath);
 
-    context.subscriptions.push(vscode.languages.registerCompletionItemProvider('sql', completionItemsProvider, ' '));
+    queryHistoryStore.init(context.globalState);
+    resultsPanel.setCellEditHandler((tableName, row, column, newValue) =>
+        manager.applyCellEdit(tableName, row, column, newValue)
+    );
+
+    context.subscriptions.push(
+        vscode.languages.registerDocumentFormattingEditProvider('sql', sqlFormattingProvider),
+        vscode.languages.registerDocumentRangeFormattingEditProvider('sql', sqlFormattingProvider)
+    );
+
+    context.subscriptions.push(vscode.languages.registerCompletionItemProvider('sql', completionItemsProvider, ' ', '.'));
     
     vscode.window.registerTreeDataProvider('Table', structureProvider);
 
@@ -36,6 +49,16 @@ export function activate(context: vscode.ExtensionContext) {
     addCommand(context, 'extension.connectToSQLServer');
 
     addCommand(context, 'extension.querySQL');
+
+    addCommand(context, 'extension.showQueryHistory');
+
+    addCommand(context, 'extension.toggleReadOnly');
+
+    addCommand(context, 'extension.stopQueries');
+
+    addCommand(context, 'extension.testConnection');
+
+    addTextEditorCommand(context, 'extension.formatSQL');
     
     addCommand(context, 'extension.queryFileSQL');
 

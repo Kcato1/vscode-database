@@ -12,7 +12,7 @@ export class SaveConfig extends AbstractAction
             return;
         }
         server.getDataToRestore().then((database) => {
-            config.pushDatabase(database);
+            config.pushDatabase({ ...database, readOnly: server.readOnly });
         });
     }
 }
