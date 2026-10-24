@@ -1,5 +1,7 @@
 # Brainstorming Ideas for vscode-database
 
+This document contains **50 ideas** organized into **11 categories** for enhancing the vscode-database extension, ranging from quick wins to ambitious long-term features.
+
 ## 🚀 Quick Wins (Low Effort, High Impact)
 
 ### 1. Query History
@@ -323,7 +325,7 @@
 
 ---
 
-## Priority Matrix
+## Priority Matrix (Sample Prioritization)
 
 ### High Priority / High Impact
 - Query History (#1)
