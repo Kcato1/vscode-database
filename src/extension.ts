@@ -11,6 +11,8 @@ import { markdownProvider } from './extension/providers/markdownProvider';
 import { queryHistoryStore } from './extension/history/QueryHistoryStore';
 import { resultsPanel } from './extension/results/ResultsPanel';
 import { sqlFormattingProvider } from './extension/formatting/sqlFormattingProvider';
+import { templatesProvider } from './extension/templates/TemplatesProvider';
+import { insertTemplate, addCustomTemplate, deleteCustomTemplate } from './extension/action/extension.insertTemplate';
 
 export function activate(context: vscode.ExtensionContext) {
 
@@ -25,6 +27,9 @@ export function activate(context: vscode.ExtensionContext) {
         manager.applyCellEdit(tableName, row, column, newValue)
     );
 
+    manager.startHealthMonitor();
+    context.subscriptions.push({ dispose: () => manager.stopHealthMonitor() });
+
     context.subscriptions.push(
         vscode.languages.registerDocumentFormattingEditProvider('sql', sqlFormattingProvider),
         vscode.languages.registerDocumentRangeFormattingEditProvider('sql', sqlFormattingProvider)
@@ -35,6 +40,14 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.window.registerTreeDataProvider('Table', structureProvider);
 
     vscode.window.registerTreeDataProvider('Connections', connectionsProvider);
+
+    vscode.window.registerTreeDataProvider('SQLTemplates', templatesProvider);
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('extension.insertTemplate', insertTemplate),
+        vscode.commands.registerCommand('extension.addCustomTemplate', addCustomTemplate),
+        vscode.commands.registerCommand('extension.deleteCustomTemplate', deleteCustomTemplate),
+    );
 
     addCommand(context, 'extension.queryBuild');
 

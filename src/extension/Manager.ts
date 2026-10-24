@@ -35,6 +35,8 @@ export class Manager {
     /** Set to true by "SQL: Stop Running Queries" to stop a batch before its next statement starts. */
     private stopRequested: boolean;
     private runningBatch: boolean;
+    private healthTimer: ReturnType<typeof setInterval> | null = null;
+    private static readonly HEALTH_INTERVAL_MS = 30_000;
 
     constructor() {
         this.server = [];
@@ -46,6 +48,47 @@ export class Manager {
         this.stopRequested = false;
         this.runningBatch = false;
         this.outputMsg = this.outputMsg.bind(this);
+        this.startHealthMonitor = this.startHealthMonitor.bind(this);
+        this.stopHealthMonitor = this.stopHealthMonitor.bind(this);
+    }
+
+    startHealthMonitor() {
+        this.stopHealthMonitor();
+        this.healthTimer = setInterval(() => this.pingCurrentServer(), Manager.HEALTH_INTERVAL_MS);
+    }
+
+    stopHealthMonitor() {
+        if (this.healthTimer !== null) {
+            clearInterval(this.healthTimer);
+            this.healthTimer = null;
+        }
+    }
+
+    private async pingCurrentServer() {
+        if (!this.currentServer) return;
+        const server = this.currentServer;
+        this.statusBar.updateHealth('checking');
+        this.showStatusBarOnly();
+        const start = Date.now();
+        try {
+            await server.queryPromise('SELECT 1');
+            this.statusBar.updateHealth('ok', Date.now() - start);
+        } catch {
+            this.statusBar.updateHealth('error');
+        }
+        if (this.currentServer === server) {
+            this.showStatusBarOnly();
+        }
+    }
+
+    private showStatusBarOnly() {
+        const databaseName = this.getCurrentDatabase();
+        if (this.currentServer) {
+            this.statusBar.setServer(this.currentServer.getName(), this.currentServer.readOnly);
+        } else {
+            this.statusBar.setServer(null);
+        }
+        this.statusBar.setDatabase(databaseName);
     }
 
     showStatus(){
@@ -54,6 +97,7 @@ export class Manager {
         if (this.currentServer) {
             this.statusBar.setServer(this.currentServer.getName(), this.currentServer.readOnly);
         } else {
+            this.statusBar.updateHealth('disconnected');
             this.statusBar.setServer(null);
         }
         this.statusBar.setDatabase(databaseName);
@@ -63,6 +107,7 @@ export class Manager {
         }
 
         connectionsProvider.refreshList(this.server, this.currentServer);
+        this.startHealthMonitor();
     }
 
     outputMsg (msg: string){
