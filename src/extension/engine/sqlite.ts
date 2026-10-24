@@ -103,6 +103,13 @@ export class SQLiteType extends AbstractServer {
                     while (statement.step()) {
                         rows.push(statement.getAsObject());
                     }
+                    // Writable CTEs and mutating PRAGMAs (e.g. PRAGMA user_version = 2)
+                    // run through this path and report success but the change is only in
+                    // memory unless we flush. getRowsModified() > 0 catches writable CTEs;
+                    // the non-SELECT check catches PRAGMA writes that report 0 modified rows.
+                    if (this.db.getRowsModified() > 0 || !/^\s*select\b/i.test(sql)) {
+                        this.persist();
+                    }
                     return Promise.resolve(rows);
                 } finally {
                     statement.free();

@@ -254,9 +254,10 @@
 
         function startEdit(tab, row, col, td) {
             const originalText = td.textContent;
+            const initialValue = row[col] === null || typeof row[col] === 'undefined' ? '' : String(row[col]);
             const input = document.createElement('input');
             input.className = 'cell-editor';
-            input.value = row[col] === null || typeof row[col] === 'undefined' ? '' : row[col];
+            input.value = initialValue;
             td.textContent = '';
             td.appendChild(input);
             input.focus();
@@ -268,7 +269,7 @@
                 if (finished) return;
                 finish();
                 const newValue = input.value;
-                if (newValue === String(row[col])) {
+                if (newValue === initialValue) {
                     td.textContent = originalText;
                     return;
                 }

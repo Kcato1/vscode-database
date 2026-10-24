@@ -249,10 +249,17 @@ export class Manager {
      */
     private syncDatabaseAfterUse(sql: string, server: AbstractServer) {
         const match = sql.trim().match(/^use\s+[`"[]?([^`"\]\s;]+)[`"\]]?\s*;?$/i);
-        if (match && server.type !== 'postgres' && server.type !== 'postgresSSL') {
-            server.currentDatabase = match[1];
-            this.showStatus();
+        if (!match || server.type === 'postgres' || server.type === 'postgresSSL') {
+            return;
         }
+        if (server.type === 'mssql') {
+            // mssql uses a connection pool; USE only affects one pooled connection.
+            // Call changeDatabase() so the pool reconnects with the right database.
+            server.changeDatabase(match[1]).then(() => this.showStatus()).catch(() => { /* ignore */ });
+            return;
+        }
+        server.currentDatabase = match[1];
+        this.showStatus();
     }
 
     /** Request that the currently running batch stop before its next statement. */
