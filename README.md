@@ -11,6 +11,7 @@ Extension for Visual Studio Code
 
 ## Usage
 
+* [New in 2.3: history, formatting, editable results, read-only mode, more databases](https://github.com/Bajdzis/vscode-database/blob/master/doc/new-features.md)
 * Connection
     * [Create many connection to database](https://github.com/Bajdzis/vscode-database/blob/master/doc/create-connection.md)
     * [Save connection](https://github.com/Bajdzis/vscode-database/blob/master/doc/save-connection.md)
@@ -43,6 +44,16 @@ Extension for Visual Studio Code
 </table>
  
 ## Changelog
+
+* 2.3.0
+    * New databases: MariaDB, Microsoft SQL Server, SQLite
+    * Results grid: one tab per statement, filter, sort, copy cell/row/column/CSV/JSON/Markdown, inline cell editing
+    * Multi-statement scripts run strictly in order and stop at the first error; `SQL: Stop Running Queries`
+    * Query history (`Ctrl+Alt+H`), SQL formatting, context aware autocompletion
+    * Read-only connections and connection testing (button on the form, `SQL: Test current connection`)
+    * Fix: PostgreSQL connections hung on current Node versions (upgraded `pg` to 8, fixed double release of pooled clients)
+    * Fix: structure tree and autocompletion now follow `USE db` and DDL statements
+    * Internal: webpack 5, TypeScript 4.9, Jest 29; removed the deprecated `vscode` npm package and the unused mocha scaffold
 
 * 2.2.3
     * add insecureAuth connection for mysql #216

@@ -47,7 +47,7 @@ export class MySQLType extends AbstractServer
                 if (err) {
                     reject(err.message);
                 } else {
-                    resolve();
+                    resolve(undefined);
                 }
             });
         });
@@ -69,18 +69,39 @@ export class MySQLType extends AbstractServer
      * @param {string} sql
      * @return {Promise}
      */
-    queryPromise(sql: string): Promise<AnyObject[]>{
+    queryPromise(sql: string, params?: any[]): Promise<AnyObject[]>{
         return new Promise((resolve, reject) => {
             if (!this.connection) {
                 reject('connection is undefined');
                 return;
             }
-            this.connection.query(sql, (err: Error, rows: AnyObject[]) => {
+            const callback = (err: Error | null, rows: AnyObject[]) => {
                 if(err){
                     reject(err.message);
                     return;
                 }
                 resolve(rows);
+            };
+            if (params) {
+                this.connection.query(sql, params, callback);
+            } else {
+                this.connection.query(sql, callback);
+            }
+        });
+    }
+
+    /**
+     * @return {Promise<void>}
+     */
+    closeConnect(): Promise<void> {
+        return new Promise((resolve) => {
+            if (!this.connection) {
+                resolve(undefined);
+                return;
+            }
+            this.connection.end(() => {
+                this.connection = undefined;
+                resolve(undefined);
             });
         });
     }
@@ -108,7 +129,7 @@ export class MySQLType extends AbstractServer
         return new Promise((resolve, reject) => {
             this.queryPromise('USE `' + name + '`').then(() => {
                 this.currentDatabase = name;
-                resolve();
+                resolve({});
             }).catch((err) => {
                 this.currentDatabase = null;
                 reject(err);
@@ -205,7 +226,7 @@ export class MySQLType extends AbstractServer
      * @return {string} a quoted identifier table name
      */
     getIdentifiedTableName(tableName: string){
-        return `\`${tableName}\``;
+        return `\`${tableName.replace(/`/g, '``')}\``;
     }
 
     /**

@@ -8,6 +8,8 @@ export const setExtensionPath = (newExtensionPath: string) => {
     extensionPath = newExtensionPath;
 };
 
+export const getExtensionPath = () => extensionPath;
+
 const getPath = (piecesOfPath: string[] = []) => path.join(extensionPath, 'webViews', ...piecesOfPath);
 
 export const getSetting = () => ({

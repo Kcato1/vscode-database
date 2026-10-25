@@ -55,12 +55,14 @@ export class PostgreSSLSQLType extends PostgreSQLType {
             connection.connect((err, client, release) => {
                 this.connection = connection;
                 this.release = release;
-                this.release();
+                if (release) {
+                    release();
+                }
                 if (err) {
                     reject(err);
                     return;
                 }
-                resolve();
+                resolve(undefined);
             });
             connection.on('error', reject);
         });

@@ -18,6 +18,7 @@ const config = {
         path: path.resolve(__dirname, 'out'),
         filename: 'extension.js',
         libraryTarget: 'commonjs2',
+        clean: true, // drop stale chunks from earlier builds
         devtoolModuleFilenameTemplate: '../[resource-path]',
     },
     devtool: 'source-map',
@@ -28,7 +29,7 @@ const config = {
         extensions: ['.ts', '.js']
     },
     plugins: [
-        new webpack.IgnorePlugin(/^pg-native$/)
+        new webpack.IgnorePlugin({ resourceRegExp: /^pg-native$/ })
     ],
     module: {
         rules: [{
@@ -38,7 +39,8 @@ const config = {
                 loader: 'ts-loader',
                 options: {
                     compilerOptions: {
-                        'module': 'esnext' // override `tsconfig.json` so that TypeScript emits native JavaScript modules.
+                        'module': 'esnext', // override `tsconfig.json` so that TypeScript emits native JavaScript modules.
+                        'moduleResolution': 'node' // 'module: esnext' otherwise flips TS's default resolution to 'classic', which cannot resolve package names or directory indexes (`./action` -> `./action/index.ts`).
                     }
                 }
             }]

@@ -38,6 +38,8 @@
         <div id="fields" data-type="none"></div>
 
         <button class="button button--primary" onclick="tryConnect()">Connect</button>
+        <button class="button" onclick="testConnection()">Test connection</button>
+        <p id="testResult" hidden></p>
 
     </div>
 
@@ -75,6 +77,14 @@
                     type
                 }
             });
+        }
+
+        const testConnection = () => {
+            const { fieldValue, type } = state;
+            const result = document.getElementById('testResult');
+            result.removeAttribute('hidden');
+            result.innerText = 'Testing connection...';
+            vscode.postMessage({ type: 'TEST_CONNECTION', payload: { fieldValue, type } });
         }
 
         const renderField = ({type, name, title, value, info}) => {
@@ -161,6 +171,11 @@
                 const errorMessage = document.getElementById('errorMessage');
                 error.removeAttribute('hidden');
                 errorMessage.innerText = data.payload.error.toString();
+            }
+            if (data.type === 'TEST_CONNECTION_RESULT') {
+                const result = document.getElementById('testResult');
+                result.removeAttribute('hidden');
+                result.innerText = (data.payload.ok ? '\u2705 ' : '\u274C ') + data.payload.message;
             }
             if (data.type === 'SHOW_FORM') {
                 var currentType = data.payload.filter(sql => sql.type === initialType)[0];

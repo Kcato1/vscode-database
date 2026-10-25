@@ -25,7 +25,8 @@ class ConnectionsProvider{
 
         this.items = connections.map((connection): vscode.TreeItem => {
             const databaseName = connection.currentDatabase || 'no DB selected';
-            const item = new vscode.TreeItem(connection.getName() + ':' + databaseName + (connection === activeConnection ? ' - active' : '' ));
+            const readOnlyBadge = connection.readOnly ? ' [read-only]' : '';
+            const item = new vscode.TreeItem(connection.getName() + ':' + databaseName + readOnlyBadge + (connection === activeConnection ? ' - active' : '' ));
             item.contextValue = 'databaseItem';//for menus
             item.command = {
                 title: 'change server',

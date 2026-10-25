@@ -61,7 +61,7 @@ export class MySQLSSLType extends MySQLType {
                     reject(err.message);
                 } else {
                     this.connection = connection;
-                    resolve();
+                    resolve(undefined);
                 }
             });
         });

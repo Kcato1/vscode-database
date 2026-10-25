@@ -8,20 +8,46 @@ import connectionsProvider from './extension/ConnectionsProvider';
 import completionItemsProvider from './extension/CompletionItemsProvider';
 import { setExtensionPath } from './extension/webViews/webViewsRunner';
 import { markdownProvider } from './extension/providers/markdownProvider';
+import { queryHistoryStore } from './extension/history/QueryHistoryStore';
+import { resultsPanel } from './extension/results/ResultsPanel';
+import { sqlFormattingProvider } from './extension/formatting/sqlFormattingProvider';
+import { templatesProvider } from './extension/templates/TemplatesProvider';
+import { insertTemplate, addCustomTemplate, deleteCustomTemplate } from './extension/action/extension.insertTemplate';
 
 export function activate(context: vscode.ExtensionContext) {
-    
+
     config.getDatabases().then((databases) => {
         manager.restoreConnections(databases);
     });
 
     setExtensionPath(context.extensionPath);
 
-    context.subscriptions.push(vscode.languages.registerCompletionItemProvider('sql', completionItemsProvider, ' '));
+    queryHistoryStore.init(context.globalState);
+    resultsPanel.setCellEditHandler((tableName, row, column, newValue) =>
+        manager.applyCellEdit(tableName, row, column, newValue)
+    );
+
+    manager.startHealthMonitor();
+    context.subscriptions.push({ dispose: () => manager.stopHealthMonitor() });
+
+    context.subscriptions.push(
+        vscode.languages.registerDocumentFormattingEditProvider('sql', sqlFormattingProvider),
+        vscode.languages.registerDocumentRangeFormattingEditProvider('sql', sqlFormattingProvider)
+    );
+
+    context.subscriptions.push(vscode.languages.registerCompletionItemProvider('sql', completionItemsProvider, ' ', '.'));
     
     vscode.window.registerTreeDataProvider('Table', structureProvider);
 
     vscode.window.registerTreeDataProvider('Connections', connectionsProvider);
+
+    vscode.window.registerTreeDataProvider('SQLTemplates', templatesProvider);
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('extension.insertTemplate', insertTemplate),
+        vscode.commands.registerCommand('extension.addCustomTemplate', addCustomTemplate),
+        vscode.commands.registerCommand('extension.deleteCustomTemplate', deleteCustomTemplate),
+    );
 
     addCommand(context, 'extension.queryBuild');
 
@@ -36,6 +62,16 @@ export function activate(context: vscode.ExtensionContext) {
     addCommand(context, 'extension.connectToSQLServer');
 
     addCommand(context, 'extension.querySQL');
+
+    addCommand(context, 'extension.showQueryHistory');
+
+    addCommand(context, 'extension.toggleReadOnly');
+
+    addCommand(context, 'extension.stopQueries');
+
+    addCommand(context, 'extension.testConnection');
+
+    addTextEditorCommand(context, 'extension.formatSQL');
     
     addCommand(context, 'extension.queryFileSQL');
 
